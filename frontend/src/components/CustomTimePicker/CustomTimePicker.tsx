@@ -5,20 +5,24 @@ import './CustomTimePicker.styles.scss';
 import { Input, Popover, Tooltip, Typography } from 'antd';
 import cx from 'classnames';
 import { DateTimeRangeType } from 'container/TopNav/CustomDateTimeModal';
-import { Options } from 'container/TopNav/DateTimeSelection/config';
 import {
 	FixedDurationSuggestionOptions,
+	Options,
 	RelativeDurationSuggestionOptions,
 } from 'container/TopNav/DateTimeSelectionV2/config';
 import dayjs from 'dayjs';
-import { defaultTo, noop } from 'lodash-es';
+import { isValidTimeFormat } from 'lib/getMinMax';
+import { defaultTo, isFunction, noop } from 'lodash-es';
 import debounce from 'lodash-es/debounce';
 import { CheckCircle, ChevronDown, Clock } from 'lucide-react';
+import { useTimezone } from 'providers/Timezone';
 import {
 	ChangeEvent,
 	Dispatch,
 	SetStateAction,
+	useCallback,
 	useEffect,
+	useMemo,
 	useState,
 } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -27,13 +31,22 @@ import { popupContainer } from 'utils/selectPopupContainer';
 import CustomTimePickerPopoverContent from './CustomTimePickerPopoverContent';
 
 const maxAllowedMinTimeInMonths = 6;
+type ViewType = 'datetime' | 'timezone';
+const DEFAULT_VIEW: ViewType = 'datetime';
 
 interface CustomTimePickerProps {
 	onSelect: (value: string) => void;
 	onError: (value: boolean) => void;
 	selectedValue: string;
 	selectedTime: string;
-	onValidCustomDateChange: ([t1, t2]: any[]) => void;
+	onValidCustomDateChange: ({
+		time: [t1, t2],
+		timeStr,
+	}: {
+		time: [dayjs.Dayjs | null, dayjs.Dayjs | null];
+		timeStr: string;
+	}) => void;
+	onCustomTimeStatusUpdate?: (isValid: boolean) => void;
 	open: boolean;
 	setOpen: Dispatch<SetStateAction<boolean>>;
 	items: any[];
@@ -53,6 +66,7 @@ function CustomTimePicker({
 	open,
 	setOpen,
 	onValidCustomDateChange,
+	onCustomTimeStatusUpdate,
 	newPopover,
 	customDateTimeVisible,
 	setCustomDTPickerVisible,
@@ -72,11 +86,42 @@ function CustomTimePicker({
 	const location = useLocation();
 	const [isInputFocused, setIsInputFocused] = useState(false);
 
+	const [activeView, setActiveView] = useState<ViewType>(DEFAULT_VIEW);
+
+	const { timezone, browserTimezone } = useTimezone();
+	const activeTimezoneOffset = timezone.offset;
+	const isTimezoneOverridden = useMemo(
+		() => timezone.offset !== browserTimezone.offset,
+		[timezone, browserTimezone],
+	);
+
+	const handleViewChange = useCallback(
+		(newView: 'timezone' | 'datetime'): void => {
+			if (activeView !== newView) {
+				setActiveView(newView);
+			}
+			setOpen(true);
+		},
+		[activeView, setOpen],
+	);
+
+	const [isOpenedFromFooter, setIsOpenedFromFooter] = useState(false);
+
 	const getSelectedTimeRangeLabel = (
 		selectedTime: string,
 		selectedTimeValue: string,
 	): string => {
 		if (selectedTime === 'custom') {
+			// Convert the date range string to 12-hour format
+			const dates = selectedTimeValue.split(' - ');
+			if (dates.length === 2) {
+				const startDate = dayjs(dates[0], 'DD/MM/YYYY HH:mm');
+				const endDate = dayjs(dates[1], 'DD/MM/YYYY HH:mm');
+
+				return `${startDate.format('DD/MM/YYYY hh:mm A')} - ${endDate.format(
+					'DD/MM/YYYY hh:mm A',
+				)}`;
+			}
 			return selectedTimeValue;
 		}
 
@@ -85,6 +130,7 @@ function CustomTimePicker({
 				return Options[index].label;
 			}
 		}
+
 		for (
 			let index = 0;
 			index < RelativeDurationSuggestionOptions.length;
@@ -94,10 +140,15 @@ function CustomTimePicker({
 				return RelativeDurationSuggestionOptions[index].label;
 			}
 		}
+
 		for (let index = 0; index < FixedDurationSuggestionOptions.length; index++) {
 			if (FixedDurationSuggestionOptions[index].value === selectedTime) {
 				return FixedDurationSuggestionOptions[index].label;
 			}
+		}
+
+		if (isValidTimeFormat(selectedTime)) {
+			return selectedTime;
 		}
 
 		return '';
@@ -105,7 +156,6 @@ function CustomTimePicker({
 
 	useEffect(() => {
 		const value = getSelectedTimeRangeLabel(selectedTime, selectedValue);
-
 		setSelectedTimePlaceholderValue(value);
 	}, [selectedTime, selectedValue]);
 
@@ -115,6 +165,10 @@ function CustomTimePicker({
 
 	const handleOpenChange = (newOpen: boolean): void => {
 		setOpen(newOpen);
+		if (!newOpen) {
+			setCustomDTPickerVisible?.(false);
+			setActiveView('datetime');
+		}
 	};
 
 	const debouncedHandleInputChange = debounce((inputValue): void => {
@@ -158,13 +212,22 @@ function CustomTimePicker({
 				setInputStatus('error');
 				onError(true);
 				setInputErrorMessage('Please enter time less than 6 months');
+				if (isFunction(onCustomTimeStatusUpdate)) {
+					onCustomTimeStatusUpdate(true);
+				}
 			} else {
-				onValidCustomDateChange([minTime, currentTime]);
+				onValidCustomDateChange({
+					time: [minTime, currentTime],
+					timeStr: inputValue,
+				});
 			}
 		} else {
 			setInputStatus('error');
 			onError(true);
 			setInputErrorMessage(null);
+			if (isFunction(onCustomTimeStatusUpdate)) {
+				onCustomTimeStatusUpdate(false);
+			}
 		}
 	}, 300);
 
@@ -218,6 +281,7 @@ function CustomTimePicker({
 
 	const handleFocus = (): void => {
 		setIsInputFocused(true);
+		setActiveView('datetime');
 	};
 
 	const handleBlur = (): void => {
@@ -254,13 +318,17 @@ function CustomTimePicker({
 							handleGoLive={defaultTo(handleGoLive, noop)}
 							options={items}
 							selectedTime={selectedTime}
+							activeView={activeView}
+							setActiveView={setActiveView}
+							setIsOpenedFromFooter={setIsOpenedFromFooter}
+							isOpenedFromFooter={isOpenedFromFooter}
 						/>
 					) : (
 						content
 					)
 				}
 				arrow={false}
-				trigger="hover"
+				trigger="click"
 				open={open}
 				onOpenChange={handleOpenChange}
 				style={{
@@ -290,12 +358,24 @@ function CustomTimePicker({
 						)
 					}
 					suffix={
-						<ChevronDown
-							size={14}
-							onClick={(): void => {
-								setOpen(!open);
-							}}
-						/>
+						<>
+							{!!isTimezoneOverridden && activeTimezoneOffset && (
+								<div
+									className="timezone-badge"
+									onClick={(e): void => {
+										e.stopPropagation();
+										handleViewChange('timezone');
+										setIsOpenedFromFooter(false);
+									}}
+								>
+									<span>{activeTimezoneOffset}</span>
+								</div>
+							)}
+							<ChevronDown
+								size={14}
+								onClick={(): void => handleViewChange('datetime')}
+							/>
+						</>
 					}
 				/>
 			</Popover>
@@ -317,4 +397,5 @@ CustomTimePicker.defaultProps = {
 	setCustomDTPickerVisible: noop,
 	onCustomDateHandler: noop,
 	handleGoLive: noop,
+	onCustomTimeStatusUpdate: noop,
 };

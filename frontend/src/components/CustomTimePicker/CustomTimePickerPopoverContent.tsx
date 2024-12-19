@@ -1,6 +1,7 @@
 import './CustomTimePicker.styles.scss';
 
-import { Button, DatePicker } from 'antd';
+import { Color } from '@signozhq/design-tokens';
+import { Button } from 'antd';
 import cx from 'classnames';
 import ROUTES from 'constants/routes';
 import { DateTimeRangeType } from 'container/TopNav/CustomDateTimeModal';
@@ -9,12 +10,13 @@ import {
 	Option,
 	RelativeDurationSuggestionOptions,
 } from 'container/TopNav/DateTimeSelectionV2/config';
-import dayjs, { Dayjs } from 'dayjs';
+import { Clock, PenLine } from 'lucide-react';
+import { useTimezone } from 'providers/Timezone';
 import { Dispatch, SetStateAction, useMemo } from 'react';
-import { useSelector } from 'react-redux';
 import { useLocation } from 'react-router-dom';
-import { AppState } from 'store/reducers';
-import { GlobalReducer } from 'types/reducer/globalTime';
+
+import RangePickerModal from './RangePickerModal';
+import TimezonePicker from './TimezonePicker';
 
 interface CustomTimePickerPopoverContentProps {
 	options: any[];
@@ -28,8 +30,13 @@ interface CustomTimePickerPopoverContentProps {
 	onSelectHandler: (label: string, value: string) => void;
 	handleGoLive: () => void;
 	selectedTime: string;
+	activeView: 'datetime' | 'timezone';
+	setActiveView: Dispatch<SetStateAction<'datetime' | 'timezone'>>;
+	isOpenedFromFooter: boolean;
+	setIsOpenedFromFooter: Dispatch<SetStateAction<boolean>>;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity
 function CustomTimePickerPopoverContent({
 	options,
 	setIsOpen,
@@ -39,36 +46,19 @@ function CustomTimePickerPopoverContent({
 	onSelectHandler,
 	handleGoLive,
 	selectedTime,
+	activeView,
+	setActiveView,
+	isOpenedFromFooter,
+	setIsOpenedFromFooter,
 }: CustomTimePickerPopoverContentProps): JSX.Element {
-	const { RangePicker } = DatePicker;
 	const { pathname } = useLocation();
-
-	const { maxTime, minTime } = useSelector<AppState, GlobalReducer>(
-		(state) => state.globalTime,
-	);
 
 	const isLogsExplorerPage = useMemo(() => pathname === ROUTES.LOGS_EXPLORER, [
 		pathname,
 	]);
+	const { timezone } = useTimezone();
+	const activeTimezoneOffset = timezone.offset;
 
-	const disabledDate = (current: Dayjs): boolean => {
-		const currentDay = dayjs(current);
-		return currentDay.isAfter(dayjs());
-	};
-
-	const onPopoverClose = (visible: boolean): void => {
-		if (!visible) {
-			setCustomDTPickerVisible(false);
-		}
-		setIsOpen(visible);
-	};
-
-	const onModalOkHandler = (date_time: any): void => {
-		if (date_time?.[1]) {
-			onPopoverClose(false);
-		}
-		onCustomDateHandler(date_time, LexicalContext.CUSTOM_DATE_PICKER);
-	};
 	function getTimeChips(options: Option[]): JSX.Element {
 		return (
 			<div className="relative-date-time-section">
@@ -88,49 +78,99 @@ function CustomTimePickerPopoverContent({
 		);
 	}
 
+	const handleTimezoneHintClick = (): void => {
+		setActiveView('timezone');
+		setIsOpenedFromFooter(true);
+	};
+
+	if (activeView === 'timezone') {
+		return (
+			<div className="date-time-popover">
+				<TimezonePicker
+					setActiveView={setActiveView}
+					setIsOpen={setIsOpen}
+					isOpenedFromFooter={isOpenedFromFooter}
+				/>
+			</div>
+		);
+	}
+
 	return (
-		<div className="date-time-popover">
-			<div className="date-time-options">
-				{isLogsExplorerPage && (
-					<Button className="data-time-live" type="text" onClick={handleGoLive}>
-						Live
-					</Button>
-				)}
-				{options.map((option) => (
-					<Button
-						type="text"
-						key={option.label + option.value}
-						onClick={(): void => {
-							onSelectHandler(option.label, option.value);
-						}}
-						className={cx(
-							'date-time-options-btn',
-							selectedTime === option.value && 'active',
-						)}
-					>
-						{option.label}
-					</Button>
-				))}
+		<>
+			<div className="date-time-popover">
+				<div className="date-time-options">
+					{isLogsExplorerPage && (
+						<Button className="data-time-live" type="text" onClick={handleGoLive}>
+							Live
+						</Button>
+					)}
+					{options.map((option) => (
+						<Button
+							type="text"
+							key={option.label + option.value}
+							onClick={(): void => {
+								onSelectHandler(option.label, option.value);
+							}}
+							className={cx(
+								'date-time-options-btn',
+								customDateTimeVisible
+									? option.value === 'custom' && 'active'
+									: selectedTime === option.value && 'active',
+							)}
+						>
+							{option.label}
+						</Button>
+					))}
+				</div>
+				<div
+					className={cx(
+						'relative-date-time',
+						selectedTime === 'custom' || customDateTimeVisible
+							? 'date-picker'
+							: 'relative-times',
+					)}
+				>
+					{selectedTime === 'custom' || customDateTimeVisible ? (
+						<RangePickerModal
+							setCustomDTPickerVisible={setCustomDTPickerVisible}
+							setIsOpen={setIsOpen}
+							onCustomDateHandler={onCustomDateHandler}
+							selectedTime={selectedTime}
+						/>
+					) : (
+						<div className="relative-times-container">
+							<div className="time-heading">RELATIVE TIMES</div>
+							<div>{getTimeChips(RelativeDurationSuggestionOptions)}</div>
+						</div>
+					)}
+				</div>
 			</div>
-			<div className="relative-date-time">
-				{selectedTime === 'custom' || customDateTimeVisible ? (
-					<RangePicker
-						disabledDate={disabledDate}
-						allowClear
-						onCalendarChange={onModalOkHandler}
-						// eslint-disable-next-line react/jsx-props-no-spreading
-						{...(selectedTime === 'custom' && {
-							defaultValue: [dayjs(minTime / 1000000), dayjs(maxTime / 1000000)],
-						})}
+
+			<div className="date-time-popover__footer">
+				<div className="timezone-container">
+					<Clock
+						color={Color.BG_VANILLA_400}
+						className="timezone-container__clock-icon"
+						height={12}
+						width={12}
 					/>
-				) : (
-					<div>
-						<div className="time-heading">RELATIVE TIMES</div>
-						<div>{getTimeChips(RelativeDurationSuggestionOptions)}</div>
-					</div>
-				)}
+					<span className="timezone__icon">Current timezone</span>
+					<div>⎯</div>
+					<button
+						type="button"
+						className="timezone"
+						onClick={handleTimezoneHintClick}
+					>
+						<span>{activeTimezoneOffset}</span>
+						<PenLine
+							color={Color.BG_VANILLA_100}
+							className="timezone__icon"
+							size={10}
+						/>
+					</button>
+				</div>
 			</div>
-		</div>
+		</>
 	);
 }
 

@@ -1,8 +1,7 @@
 import './TraceDetails.styles.scss';
 
 import { FilterOutlined } from '@ant-design/icons';
-import { Button, Col, Typography } from 'antd';
-import Sider from 'antd/es/layout/Sider';
+import { Button, Col, Layout, Typography } from 'antd';
 import cx from 'classnames';
 import {
 	StyledCol,
@@ -23,7 +22,9 @@ import useUrlQuery from 'hooks/useUrlQuery';
 import { spanServiceNameToColorMapping } from 'lib/getRandomColor';
 import history from 'lib/history';
 import { map } from 'lodash-es';
+import { PanelRight } from 'lucide-react';
 import { SPAN_DETAILS_LEFT_COL_WIDTH } from 'pages/TraceDetail/constants';
+import { useTimezone } from 'providers/Timezone';
 import { useEffect, useMemo, useState } from 'react';
 import { ITraceForest, PayloadProps } from 'types/api/trace/getTraceItem';
 import { getSpanTreeMetadata } from 'utils/getSpanTreeMetadata';
@@ -33,6 +34,7 @@ import MissingSpansMessage from './Missingtrace';
 import SelectedSpanDetails from './SelectedSpanDetails';
 import * as styles from './styles';
 import { FlameGraphMissingSpansContainer, GanttChartWrapper } from './styles';
+import SubTreeMessage from './SubTree';
 import {
 	formUrlParams,
 	getSortedData,
@@ -41,11 +43,19 @@ import {
 	INTERVAL_UNITS,
 } from './utils';
 
+const { Sider } = Layout;
+
 function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 	const spanServiceColors = useMemo(
 		() => spanServiceNameToColorMapping(response[0].events),
 		[response],
 	);
+
+	const traceStartTime = useMemo(() => response[0].startTimestampMillis, [
+		response,
+	]);
+
+	const traceEndTime = useMemo(() => response[0].endTimestampMillis, [response]);
 
 	const urlQuery = useUrlQuery();
 	const [spanId] = useState<string | null>(urlQuery.get('spanId'));
@@ -130,6 +140,8 @@ function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 
 	const isDarkMode = useIsDarkMode();
 
+	const { timezone } = useTimezone();
+
 	return (
 		<StyledRow styledclass={[Flex({ flex: 1 })]}>
 			<StyledCol flex="auto" styledclass={styles.leftContainer}>
@@ -142,9 +154,10 @@ function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 							Trace Details
 						</StyledTypography.Title>
 						<StyledTypography.Text styledclass={[styles.removeMargin]}>
-							{traceMetaData.totalSpans} Span
+							{traceMetaData.totalSpans} Spans
 						</StyledTypography.Text>
 						{hasMissingSpans && <MissingSpansMessage />}
+						{response[0]?.isSubTree && <SubTreeMessage />}
 					</StyledCol>
 					<Col flex="auto">
 						{map(tree.spanTree, (tree) => (
@@ -185,7 +198,9 @@ function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 					{isGlobalTimeVisible && (
 						<styles.TimeStampContainer flex={`${SPAN_DETAILS_LEFT_COL_WIDTH}px`}>
 							<Typography>
-								{dayjs(traceMetaData.globalStart).format('hh:mm:ss a MM/DD')}
+								{dayjs(traceMetaData.globalStart)
+									.tz(timezone.value)
+									.format('hh:mm:ss a (UTC Z) MM/DD')}
 							</Typography>
 						</styles.TimeStampContainer>
 					)}
@@ -210,10 +225,18 @@ function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 					<Col flex={`${SPAN_DETAILS_LEFT_COL_WIDTH}px`} />
 					<Col flex="auto">
 						<StyledSpace styledclass={[styles.floatRight]}>
-							<Button onClick={onFocusSelectedSpanHandler} icon={<FilterOutlined />}>
+							<Button
+								onClick={onFocusSelectedSpanHandler}
+								icon={<FilterOutlined />}
+								data-testid="span-focus-btn"
+							>
 								Focus on selected span
 							</Button>
-							<Button type="default" onClick={onResetHandler}>
+							<Button
+								type="default"
+								onClick={onResetHandler}
+								data-testid="reset-focus"
+							>
 								Reset Focus
 							</Button>
 						</StyledSpace>
@@ -244,19 +267,30 @@ function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 
 			<Sider
 				className={cx('span-details-sider', isDarkMode ? 'dark' : 'light')}
-				style={{ background: isDarkMode ? '#000' : '#fff' }}
+				style={{ background: isDarkMode ? '#0b0c0e' : '#fff' }}
 				theme={isDarkMode ? 'dark' : 'light'}
 				collapsible
 				collapsed={collapsed}
 				reverseArrow
 				width={300}
-				collapsedWidth={40}
-				onCollapse={(value): void => setCollapsed(value)}
+				collapsedWidth={48}
+				defaultCollapsed
+				trigger={null}
+				data-testid="span-details-sider"
 			>
-				{!collapsed && (
-					<StyledCol styledclass={[styles.selectedSpanDetailContainer]}>
+				<StyledCol styledclass={[styles.selectedSpanDetailContainer]}>
+					{collapsed ? (
+						<Button
+							className="periscope-btn nav-item-label expand-collapse-btn"
+							icon={<PanelRight size={16} />}
+							onClick={(): void => setCollapsed((prev) => !prev)}
+						/>
+					) : (
 						<SelectedSpanDetails
+							setCollapsed={setCollapsed}
 							firstSpanStartTime={firstSpanStartTime}
+							traceStartTime={traceStartTime}
+							traceEndTime={traceEndTime}
 							tree={[
 								...(getSelectedNode.spanTree ? getSelectedNode.spanTree : []),
 								...(getSelectedNode.missingSpanTree
@@ -266,8 +300,8 @@ function TraceDetail({ response }: TraceDetailProps): JSX.Element {
 								.filter(Boolean)
 								.find((tree) => tree)}
 						/>
-					</StyledCol>
-				)}
+					)}
+				</StyledCol>
 			</Sider>
 		</StyledRow>
 	);
